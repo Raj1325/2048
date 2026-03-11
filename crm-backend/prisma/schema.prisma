@@ -1,0 +1,195 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ─── Enums ───────────────────────────────────────────────────────────────────
+
+enum TenantPlan {
+  FREE
+  STARTER
+  PROFESSIONAL
+  ENTERPRISE
+}
+
+enum TenantStatus {
+  ACTIVE
+  SUSPENDED
+  TRIAL
+  CANCELLED
+}
+
+enum UserRole {
+  SUPER_ADMIN // platform-level admin
+  TENANT_ADMIN // admin within a tenant
+  MANAGER
+  MEMBER
+  READ_ONLY
+}
+
+enum AuthProvider {
+  LOCAL
+  GOOGLE
+  APPLE
+  COGNITO
+}
+
+enum TokenType {
+  EMAIL_VERIFICATION
+  PASSWORD_RESET
+  INVITE
+}
+
+// ─── Tenant (Organisation) ───────────────────────────────────────────────────
+
+model Tenant {
+  id          String       @id @default(cuid())
+  name        String
+  domain      String       @unique
+  slug        String       @unique
+  logoUrl     String?
+  plan        TenantPlan   @default(FREE)
+  status      TenantStatus @default(TRIAL)
+  maxUsers    Int          @default(5)
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
+
+  settings    TenantSettings?
+  users       User[]
+  invites     UserInvite[]
+
+  @@index([domain])
+  @@index([slug])
+}
+
+model TenantSettings {
+  id                    String  @id @default(cuid())
+  tenantId              String  @unique
+  allowGoogleLogin      Boolean @default(true)
+  allowAppleLogin       Boolean @default(true)
+  allowPasswordLogin    Boolean @default(true)
+  requireMfa            Boolean @default(false)
+  sessionTimeoutMinutes Int     @default(60)
+  allowedEmailDomains   String[] // restrict signup to certain email domains
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+}
+
+// ─── User ────────────────────────────────────────────────────────────────────
+
+model User {
+  id            String    @id @default(cuid())
+  tenantId      String
+  email         String
+  passwordHash  String?
+  firstName     String?
+  lastName      String?
+  avatarUrl     String?
+  role          UserRole  @default(MEMBER)
+  isActive      Boolean   @default(true)
+  emailVerified Boolean   @default(false)
+  lastLoginAt   DateTime?
+  loginCount    Int       @default(0)
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  // OAuth identifiers
+  googleId   String?
+  appleId    String?
+  cognitoId  String?
+
+  // Auth metadata (stored as JSON for extensibility)
+  authMetadata Json?
+
+  tenant        Tenant          @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  refreshTokens RefreshToken[]
+  authEvents    AuthEvent[]
+  otpTokens     OtpToken[]
+
+  @@unique([tenantId, email])
+  @@unique([googleId])
+  @@unique([appleId])
+  @@index([tenantId])
+  @@index([email])
+  @@index([cognitoId])
+}
+
+// ─── Tokens ──────────────────────────────────────────────────────────────────
+
+model RefreshToken {
+  id          String   @id @default(cuid())
+  userId      String
+  tenantId    String
+  token       String   @unique
+  deviceInfo  String?  // user-agent / device fingerprint
+  ipAddress   String?
+  expiresAt   DateTime
+  isRevoked   Boolean  @default(false)
+  revokedAt   DateTime?
+  createdAt   DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([tenantId])
+  @@index([token])
+}
+
+model OtpToken {
+  id        String    @id @default(cuid())
+  userId    String
+  type      TokenType
+  token     String    @unique
+  expiresAt DateTime
+  usedAt    DateTime?
+  createdAt DateTime  @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([token])
+}
+
+// ─── Invite ──────────────────────────────────────────────────────────────────
+
+model UserInvite {
+  id         String   @id @default(cuid())
+  tenantId   String
+  email      String
+  role       UserRole @default(MEMBER)
+  token      String   @unique
+  invitedBy  String
+  acceptedAt DateTime?
+  expiresAt  DateTime
+  createdAt  DateTime @default(now())
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@unique([tenantId, email])
+  @@index([token])
+}
+
+// ─── Audit / Event Log ───────────────────────────────────────────────────────
+
+model AuthEvent {
+  id         String   @id @default(cuid())
+  userId     String?
+  tenantId   String?
+  eventType  String   // LOGIN, LOGOUT, LOGIN_FAILED, PASSWORD_RESET, etc.
+  provider   AuthProvider?
+  ipAddress  String?
+  userAgent  String?
+  metadata   Json?
+  createdAt  DateTime @default(now())
+
+  user User? @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@index([userId])
+  @@index([tenantId])
+  @@index([eventType])
+  @@index([createdAt])
+}

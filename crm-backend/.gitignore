@@ -1,0 +1,12 @@
+node_modules/
+dist/
+.env
+*.env.local
+*.p8
+*.pem
+*.key
+service-account*.json
+.terraform/
+*.tfstate
+*.tfstate.backup
+.terraform.lock.hcl
