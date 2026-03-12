@@ -1,0 +1,85 @@
+version: '3.9'
+
+services:
+  # ─── Application ─────────────────────────────────────────────────────────────
+  app:
+    build:
+      context: .
+      target: production
+    ports:
+      - '4000:4000'
+    environment:
+      NODE_ENV: development
+      DATABASE_URL: postgresql://crm:crm_password@postgres:5432/crm_db
+      REDIS_URL: redis://redis:6379
+    env_file:
+      - .env
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+    networks:
+      - crm-network
+
+  # ─── PostgreSQL (mirrors AWS RDS in local dev) ────────────────────────────────
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: crm
+      POSTGRES_PASSWORD: crm_password
+      POSTGRES_DB: crm_db
+    ports:
+      - '5432:5432'
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U crm -d crm_db']
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - crm-network
+
+  # ─── Redis (mirrors AWS ElastiCache in local dev) ─────────────────────────────
+  redis:
+    image: redis:7-alpine
+    command: redis-server --appendonly yes --requirepass ''
+    ports:
+      - '6379:6379'
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ['CMD', 'redis-cli', 'ping']
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - crm-network
+
+  # ─── Prisma Studio (dev only) ─────────────────────────────────────────────────
+  prisma-studio:
+    build:
+      context: .
+      target: builder
+    command: npx prisma studio --port 5555 --browser none
+    ports:
+      - '5555:5555'
+    environment:
+      DATABASE_URL: postgresql://crm:crm_password@postgres:5432/crm_db
+    depends_on:
+      postgres:
+        condition: service_healthy
+    profiles:
+      - debug
+    networks:
+      - crm-network
+
+volumes:
+  postgres_data:
+  redis_data:
+
+networks:
+  crm-network:
+    driver: bridge
